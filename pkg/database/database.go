@@ -88,44 +88,6 @@ func (s *Service) InsertSensorData(data *SensorData) error {
 	return err
 }
 
-// InsertSensorDataBatch 批量插入传感器数据
-func (s *Service) InsertSensorDataBatch(data []*SensorData) error {
-	if len(data) == 0 {
-		return nil
-	}
-
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	query := `
-	INSERT INTO time_series_data (timestamp, device_id, metric_name, value, priority, data)
-	VALUES (?, ?, ?, ?, ?, ?)
-	`
-
-	stmt, err := tx.Prepare(query)
-	if err != nil {
-		return fmt.Errorf("failed to prepare statement: %w", err)
-	}
-	defer stmt.Close()
-
-	for _, item := range data {
-		timestamp, err := time.Parse(time.RFC3339, item.Timestamp)
-		if err != nil {
-			return fmt.Errorf("invalid timestamp format: %w", err)
-		}
-
-		_, err = stmt.Exec(timestamp, item.DeviceID, item.MetricName, item.Value, item.Priority, item.Data)
-		if err != nil {
-			return fmt.Errorf("failed to insert data: %w", err)
-		}
-	}
-
-	return tx.Commit()
-}
-
 // GetStats 获取数据库统计信息
 func (s *Service) GetStats() (map[string]interface{}, error) {
 	stats := make(map[string]interface{})
