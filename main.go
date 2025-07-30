@@ -92,10 +92,7 @@ func (s *Server) setupRoutes() {
 
 	// 传感器数据路由
 	s.router.HandleFunc("/api/sensor-data", s.handler.SensorDataHandler).Methods("POST")
-	s.router.HandleFunc("/api/sensor-rw", s.handler.SensorReadWriteHandler).Methods("POST")
-	s.router.HandleFunc("/api/batch-sensor-rw", s.handler.BatchSensorReadWriteHandler).Methods("POST")
 	s.router.HandleFunc("/api/stats", s.handler.StatsHandler).Methods("GET")
-	s.router.HandleFunc("/api/get-sensor-data", s.handler.GetSensorDataHandler).Methods("POST")
 
 	// 添加中间件
 	s.router.Use(s.loggingMiddleware)
