@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -13,20 +14,15 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/gorilla/mux"
-	"github.com/sirupsen/logrus"
 
 	"bench-server/pkg/config"
 	"bench-server/pkg/database"
-	"bench-server/pkg/handlers"
 )
 
 type Server struct {
-	db      *sql.DB
-	router  *mux.Router
-	logger  *logrus.Logger
-	config  *config.Config
-	handler *handlers.Server
+	db     *sql.DB
+	mux    *http.ServeMux
+	config *config.Config
 }
 
 func NewServer(cfg *config.Config) (*Server, error) {
@@ -54,32 +50,10 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		return nil, fmt.Errorf("failed to initialize database: %w", err)
 	}
 
-	// 初始化日志
-	logger := logrus.New()
-
-	// 根据配置设置日志格式
-	if cfg.LogFormat == "json" {
-		logger.SetFormatter(&logrus.JSONFormatter{})
-	} else {
-		logger.SetFormatter(&logrus.TextFormatter{})
-	}
-
-	// 根据配置设置日志级别
-	level, err := logrus.ParseLevel(cfg.LogLevel)
-	if err != nil {
-		level = logrus.InfoLevel
-	}
-	logger.SetLevel(level)
-
-	// 创建处理器实例
-	handlerServer := handlers.NewServer(db, logger)
-
 	server := &Server{
-		db:      db,
-		router:  mux.NewRouter(),
-		logger:  logger,
-		config:  cfg,
-		handler: handlerServer,
+		db:     db,
+		mux:    http.NewServeMux(),
+		config: cfg,
 	}
 
 	server.setupRoutes()
@@ -88,45 +62,19 @@ func NewServer(cfg *config.Config) (*Server, error) {
 
 func (s *Server) setupRoutes() {
 	// 健康检查
-	s.router.HandleFunc("/health", s.healthHandler).Methods("GET")
+	s.mux.HandleFunc("/health", s.healthHandler)
 
 	// 传感器数据路由
-	s.router.HandleFunc("/api/sensor-data", s.handler.SensorDataHandler).Methods("POST")
-	s.router.HandleFunc("/api/stats", s.handler.StatsHandler).Methods("GET")
-
-	// 添加中间件
-	s.router.Use(s.loggingMiddleware)
-	s.router.Use(s.recoveryMiddleware)
-}
-
-func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		next.ServeHTTP(w, r)
-		duration := time.Since(start)
-
-		s.logger.WithFields(logrus.Fields{
-			"method":     r.Method,
-			"path":       r.URL.Path,
-			"duration":   duration,
-			"user_agent": r.UserAgent(),
-		}).Info("HTTP request")
-	})
-}
-
-func (s *Server) recoveryMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer func() {
-			if err := recover(); err != nil {
-				s.logger.WithField("error", err).Error("Panic recovered")
-				http.Error(w, "Internal server error", http.StatusInternalServerError)
-			}
-		}()
-		next.ServeHTTP(w, r)
-	})
+	s.mux.HandleFunc("/api/sensor-data", s.sensorDataHandler)
+	s.mux.HandleFunc("/api/stats", s.statsHandler)
 }
 
 func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
 	if err := s.db.Ping(); err != nil {
 		http.Error(w, "Database connection failed", http.StatusServiceUnavailable)
 		return
@@ -139,10 +87,82 @@ func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) sensorDataHandler(w http.ResponseWriter, r *http.Request) {
+	return
+	defer func() {
+		if err := recover(); err != nil {
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+	}()
+
+	if r.Method != "POST" {
+		http.Error(w, "Only POST method allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	var data database.SensorData
+	if err := json.Unmarshal(body, &data); err != nil {
+		http.Error(w, "Invalid JSON format", http.StatusBadRequest)
+		return
+	}
+
+	// 数据验证
+	if data.DeviceID == "" || data.MetricName == "" || data.Timestamp == "" {
+		http.Error(w, "Missing required fields", http.StatusBadRequest)
+		return
+	}
+
+	// 验证优先级
+	if data.Priority < 1 || data.Priority > 3 {
+		data.Priority = 2 // 默认中等优先级
+	}
+
+	dbService := database.NewService(s.db)
+	if err := dbService.InsertSensorData(&data); err != nil {
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+
+	return
+}
+
+func (s *Server) statsHandler(w http.ResponseWriter, r *http.Request) {
+	// 恢复 panic
+	defer func() {
+		if err := recover(); err != nil {
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+	}()
+
+	if r.Method != "GET" {
+		log.Printf("Method not allowed: %s", r.Method)
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	dbService := database.NewService(s.db)
+	stats, err := dbService.GetStats()
+	if err != nil {
+		log.Printf("Failed to get stats: %v", err)
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(stats)
+}
+
 func (s *Server) Start() error {
 	srv := &http.Server{
 		Addr:         ":" + s.config.Port,
-		Handler:      s.router,
+		Handler:      s.mux,
 		ReadTimeout:  parseDuration(s.config.ReadTimeout),
 		WriteTimeout: parseDuration(s.config.WriteTimeout),
 		IdleTimeout:  parseDuration(s.config.IdleTimeout),
@@ -154,16 +174,16 @@ func (s *Server) Start() error {
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 		<-sigChan
 
-		s.logger.Info("Shutting down server...")
+		log.Printf("Shutting down server...")
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
 		if err := srv.Shutdown(ctx); err != nil {
-			s.logger.WithError(err).Error("Server shutdown error")
+			log.Printf("Server shutdown error: %v", err)
 		}
 	}()
 
-	s.logger.WithField("port", s.config.Port).Info("Starting server")
+	log.Printf("Starting server on port %s", s.config.Port)
 	return srv.ListenAndServe()
 }
 
