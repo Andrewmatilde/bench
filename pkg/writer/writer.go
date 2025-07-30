@@ -1,4 +1,4 @@
-package main
+package writer
 
 import (
 	"bytes"
@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"bench-server/pkg/database"
+
 	"github.com/sirupsen/logrus"
 )
 
@@ -17,13 +19,13 @@ import (
 type BatchWriter struct {
 	db           *sql.DB
 	batchSize    int
-	buffer       []*SensorData
+	buffer       []*database.SensorData
 	mutex        sync.Mutex
 	ticker       *time.Ticker
 	ctx          context.Context
 	cancel       context.CancelFunc
 	logger       *logrus.Logger
-	writeChannel chan *SensorData
+	writeChannel chan *database.SensorData
 }
 
 // NewBatchWriter 创建新的批量写入器
@@ -33,12 +35,12 @@ func NewBatchWriter(db *sql.DB, batchSize int, flushInterval time.Duration) *Bat
 	bw := &BatchWriter{
 		db:           db,
 		batchSize:    batchSize,
-		buffer:       make([]*SensorData, 0, batchSize),
+		buffer:       make([]*database.SensorData, 0, batchSize),
 		ticker:       time.NewTicker(flushInterval),
 		ctx:          ctx,
 		cancel:       cancel,
 		logger:       logrus.New(),
-		writeChannel: make(chan *SensorData, batchSize*10),
+		writeChannel: make(chan *database.SensorData, batchSize*10),
 	}
 
 	// 启动后台处理协程
@@ -48,7 +50,7 @@ func NewBatchWriter(db *sql.DB, batchSize int, flushInterval time.Duration) *Bat
 }
 
 // Write 写入单条数据
-func (bw *BatchWriter) Write(data *SensorData) error {
+func (bw *BatchWriter) Write(data *database.SensorData) error {
 	select {
 	case bw.writeChannel <- data:
 		return nil
@@ -58,7 +60,7 @@ func (bw *BatchWriter) Write(data *SensorData) error {
 }
 
 // WriteBatch 批量写入数据
-func (bw *BatchWriter) WriteBatch(dataList []*SensorData) error {
+func (bw *BatchWriter) WriteBatch(dataList []*database.SensorData) error {
 	if len(dataList) == 0 {
 		return nil
 	}
@@ -76,7 +78,7 @@ func (bw *BatchWriter) processLoop() {
 			bw.buffer = append(bw.buffer, data)
 
 			if len(bw.buffer) >= bw.batchSize {
-				buffer := make([]*SensorData, len(bw.buffer))
+				buffer := make([]*database.SensorData, len(bw.buffer))
 				copy(buffer, bw.buffer)
 				bw.buffer = bw.buffer[:0]
 				bw.mutex.Unlock()
@@ -89,7 +91,7 @@ func (bw *BatchWriter) processLoop() {
 		case <-bw.ticker.C:
 			bw.mutex.Lock()
 			if len(bw.buffer) > 0 {
-				buffer := make([]*SensorData, len(bw.buffer))
+				buffer := make([]*database.SensorData, len(bw.buffer))
 				copy(buffer, bw.buffer)
 				bw.buffer = bw.buffer[:0]
 				bw.mutex.Unlock()
@@ -112,7 +114,7 @@ func (bw *BatchWriter) processLoop() {
 }
 
 // flushBatch 刷新批量数据到数据库
-func (bw *BatchWriter) flushBatch(dataList []*SensorData) error {
+func (bw *BatchWriter) flushBatch(dataList []*database.SensorData) error {
 	if len(dataList) == 0 {
 		return nil
 	}
@@ -201,7 +203,7 @@ func NewCompressedWriter(db *sql.DB, batchSize int, flushInterval time.Duration,
 }
 
 // Write 写入数据（支持压缩）
-func (cw *CompressedWriter) Write(data *SensorData) error {
+func (cw *CompressedWriter) Write(data *database.SensorData) error {
 	if cw.compression {
 		// 压缩数据
 		compressedData := cw.compressData(data)
@@ -212,7 +214,7 @@ func (cw *CompressedWriter) Write(data *SensorData) error {
 }
 
 // compressData 压缩数据
-func (cw *CompressedWriter) compressData(data *SensorData) *SensorData {
+func (cw *CompressedWriter) compressData(data *database.SensorData) *database.SensorData {
 	// 将数据序列化为JSON
 	jsonData, err := json.Marshal(data)
 	if err != nil {
@@ -235,7 +237,7 @@ func (cw *CompressedWriter) compressData(data *SensorData) *SensorData {
 	}
 
 	// 创建压缩后的数据记录
-	compressedData := &SensorData{
+	compressedData := &database.SensorData{
 		Timestamp:  data.Timestamp,
 		DeviceID:   data.DeviceID,
 		MetricName: data.MetricName + "_compressed",
@@ -270,7 +272,7 @@ func NewPriorityWriter(db *sql.DB, batchSize int) *PriorityWriter {
 }
 
 // Write 根据优先级写入数据
-func (pw *PriorityWriter) Write(data *SensorData) error {
+func (pw *PriorityWriter) Write(data *database.SensorData) error {
 	switch data.Priority {
 	case 1: // 高优先级
 		return pw.highPriorityWriter.Write(data)
@@ -284,11 +286,11 @@ func (pw *PriorityWriter) Write(data *SensorData) error {
 }
 
 // WriteBatch 批量写入（按优先级分组）
-func (pw *PriorityWriter) WriteBatch(dataList []*SensorData) error {
+func (pw *PriorityWriter) WriteBatch(dataList []*database.SensorData) error {
 	// 按优先级分组
-	highPriority := make([]*SensorData, 0)
-	mediumPriority := make([]*SensorData, 0)
-	lowPriority := make([]*SensorData, 0)
+	highPriority := make([]*database.SensorData, 0)
+	mediumPriority := make([]*database.SensorData, 0)
+	lowPriority := make([]*database.SensorData, 0)
 
 	for _, data := range dataList {
 		switch data.Priority {

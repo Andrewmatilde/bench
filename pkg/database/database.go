@@ -1,4 +1,4 @@
-package main
+package database
 
 import (
 	"database/sql"
@@ -16,8 +16,8 @@ type SensorData struct {
 	Data       string  `json:"data"`     // 随机负载数据，用于增大传输量
 }
 
-// initDatabase 初始化数据库表结构
-func initDatabase(db *sql.DB) error {
+// InitDatabase 初始化数据库表结构
+func InitDatabase(db *sql.DB) error {
 	// 创建时序数据表
 	createTimeSeriesTable := `
 	CREATE TABLE IF NOT EXISTS time_series_data (
@@ -61,17 +61,18 @@ func initDatabase(db *sql.DB) error {
 	return nil
 }
 
-// DatabaseService 提供数据库操作服务
-type DatabaseService struct {
+// Service 提供数据库操作服务
+type Service struct {
 	db *sql.DB
 }
 
-func NewDatabaseService(db *sql.DB) *DatabaseService {
-	return &DatabaseService{db: db}
+// NewService 创建新的数据库服务
+func NewService(db *sql.DB) *Service {
+	return &Service{db: db}
 }
 
 // InsertSensorData 插入传感器数据
-func (ds *DatabaseService) InsertSensorData(data *SensorData) error {
+func (s *Service) InsertSensorData(data *SensorData) error {
 	query := `
 	INSERT INTO time_series_data (timestamp, device_id, metric_name, value, priority, data)
 	VALUES (?, ?, ?, ?, ?, ?)
@@ -83,17 +84,17 @@ func (ds *DatabaseService) InsertSensorData(data *SensorData) error {
 		return fmt.Errorf("invalid timestamp format: %w", err)
 	}
 
-	_, err = ds.db.Exec(query, timestamp, data.DeviceID, data.MetricName, data.Value, data.Priority, data.Data)
+	_, err = s.db.Exec(query, timestamp, data.DeviceID, data.MetricName, data.Value, data.Priority, data.Data)
 	return err
 }
 
 // InsertSensorDataBatch 批量插入传感器数据
-func (ds *DatabaseService) InsertSensorDataBatch(data []*SensorData) error {
+func (s *Service) InsertSensorDataBatch(data []*SensorData) error {
 	if len(data) == 0 {
 		return nil
 	}
 
-	tx, err := ds.db.Begin()
+	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -126,12 +127,12 @@ func (ds *DatabaseService) InsertSensorDataBatch(data []*SensorData) error {
 }
 
 // GetStats 获取数据库统计信息
-func (ds *DatabaseService) GetStats() (map[string]interface{}, error) {
+func (s *Service) GetStats() (map[string]interface{}, error) {
 	stats := make(map[string]interface{})
 
 	// 总记录数
 	var totalCount int64
-	err := ds.db.QueryRow("SELECT COUNT(*) FROM time_series_data").Scan(&totalCount)
+	err := s.db.QueryRow("SELECT COUNT(*) FROM time_series_data").Scan(&totalCount)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +144,7 @@ func (ds *DatabaseService) GetStats() (map[string]interface{}, error) {
 	FROM time_series_data 
 	GROUP BY priority
 	`
-	rows, err := ds.db.Query(priorityQuery)
+	rows, err := s.db.Query(priorityQuery)
 	if err != nil {
 		return nil, err
 	}
@@ -162,7 +163,7 @@ func (ds *DatabaseService) GetStats() (map[string]interface{}, error) {
 
 	// 最近24小时的数据量
 	var recentCount int64
-	err = ds.db.QueryRow("SELECT COUNT(*) FROM time_series_data WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)").Scan(&recentCount)
+	err = s.db.QueryRow("SELECT COUNT(*) FROM time_series_data WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)").Scan(&recentCount)
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +171,7 @@ func (ds *DatabaseService) GetStats() (map[string]interface{}, error) {
 
 	// 设备状态统计
 	var deviceCount int64
-	err = ds.db.QueryRow("SELECT COUNT(*) FROM device_status").Scan(&deviceCount)
+	err = s.db.QueryRow("SELECT COUNT(*) FROM device_status").Scan(&deviceCount)
 	if err != nil {
 		return nil, err
 	}
@@ -178,11 +179,16 @@ func (ds *DatabaseService) GetStats() (map[string]interface{}, error) {
 
 	// 告警总数
 	var totalAlerts int64
-	err = ds.db.QueryRow("SELECT SUM(alert_count) FROM device_status").Scan(&totalAlerts)
+	err = s.db.QueryRow("SELECT SUM(alert_count) FROM device_status").Scan(&totalAlerts)
 	if err != nil {
 		return nil, err
 	}
 	stats["total_alerts"] = totalAlerts
 
 	return stats, nil
+}
+
+// GetDB 获取数据库连接，供其他包使用
+func (s *Service) GetDB() *sql.DB {
+	return s.db
 }

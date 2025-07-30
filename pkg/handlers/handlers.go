@@ -1,4 +1,4 @@
-package main
+package handlers
 
 import (
 	"database/sql"
@@ -7,10 +7,28 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"bench-server/pkg/database"
+
+	"github.com/sirupsen/logrus"
 )
 
-// sensorDataHandler 处理传感器数据上报（扩展功能）
-func (s *Server) sensorDataHandler(w http.ResponseWriter, r *http.Request) {
+// Server HTTP服务器结构
+type Server struct {
+	db     *sql.DB
+	logger *logrus.Logger
+}
+
+// NewServer 创建新的服务器实例
+func NewServer(db *sql.DB, logger *logrus.Logger) *Server {
+	return &Server{
+		db:     db,
+		logger: logger,
+	}
+}
+
+// SensorDataHandler 处理传感器数据上报（扩展功能）
+func (s *Server) SensorDataHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, "Only POST method allowed", http.StatusMethodNotAllowed)
 		return
@@ -23,7 +41,7 @@ func (s *Server) sensorDataHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	var data SensorData
+	var data database.SensorData
 	if err := json.Unmarshal(body, &data); err != nil {
 		http.Error(w, "Invalid JSON format", http.StatusBadRequest)
 		return
@@ -40,7 +58,7 @@ func (s *Server) sensorDataHandler(w http.ResponseWriter, r *http.Request) {
 		data.Priority = 2 // 默认中等优先级
 	}
 
-	dbService := NewDatabaseService(s.db)
+	dbService := database.NewService(s.db)
 	if err := dbService.InsertSensorData(&data); err != nil {
 		s.logger.WithError(err).Error("Failed to insert sensor data")
 		http.Error(w, "Database error", http.StatusInternalServerError)
@@ -54,8 +72,8 @@ func (s *Server) sensorDataHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// sensorReadWriteHandler 处理传感器数据的读写操作（开启事务）
-func (s *Server) sensorReadWriteHandler(w http.ResponseWriter, r *http.Request) {
+// SensorReadWriteHandler 处理传感器数据的读写操作（开启事务）
+func (s *Server) SensorReadWriteHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, "Only POST method allowed", http.StatusMethodNotAllowed)
 		return
@@ -200,8 +218,8 @@ func (s *Server) sensorReadWriteHandler(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(response)
 }
 
-// batchSensorReadWriteHandler 处理批量传感器数据读写操作（开启事务）
-func (s *Server) batchSensorReadWriteHandler(w http.ResponseWriter, r *http.Request) {
+// BatchSensorReadWriteHandler 处理批量传感器数据读写操作（开启事务）
+func (s *Server) BatchSensorReadWriteHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, "Only POST method allowed", http.StatusMethodNotAllowed)
 		return
@@ -367,9 +385,9 @@ func (s *Server) batchSensorReadWriteHandler(w http.ResponseWriter, r *http.Requ
 	json.NewEncoder(w).Encode(response)
 }
 
-// statsHandler 处理统计信息请求
-func (s *Server) statsHandler(w http.ResponseWriter, r *http.Request) {
-	dbService := NewDatabaseService(s.db)
+// StatsHandler 处理统计信息请求
+func (s *Server) StatsHandler(w http.ResponseWriter, r *http.Request) {
+	dbService := database.NewService(s.db)
 	stats, err := dbService.GetStats()
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to get stats")
@@ -381,8 +399,8 @@ func (s *Server) statsHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(stats)
 }
 
-// getSensorDataHandler 处理传感器数据查询请求
-func (s *Server) getSensorDataHandler(w http.ResponseWriter, r *http.Request) {
+// GetSensorDataHandler 处理传感器数据查询请求
+func (s *Server) GetSensorDataHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, "Only POST method allowed", http.StatusMethodNotAllowed)
 		return
