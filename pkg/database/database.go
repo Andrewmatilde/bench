@@ -3,6 +3,7 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -71,20 +72,31 @@ func NewService(db *sql.DB) *Service {
 	return &Service{db: db}
 }
 
-// InsertSensorData 插入传感器数据
-func (s *Service) InsertSensorData(data *SensorData) error {
-	query := `
-	INSERT INTO time_series_data (timestamp, device_id, metric_name, value, priority, data)
-	VALUES (?, ?, ?, ?, ?, ?)
-	`
-
-	// 解析时间戳
-	timestamp, err := time.Parse(time.RFC3339, data.Timestamp)
-	if err != nil {
-		return fmt.Errorf("invalid timestamp format: %w", err)
+// BatchInsertSensorData 批量插入传感器数据
+func (s *Service) BatchInsertSensorData(dataList []*SensorData) error {
+	if len(dataList) == 0 {
+		return nil
 	}
 
-	_, err = s.db.Exec(query, timestamp, data.DeviceID, data.MetricName, data.Value, data.Priority, data.Data)
+	// 构建批量插入SQL
+	query := `INSERT INTO time_series_data (timestamp, device_id, metric_name, value, priority, data) VALUES `
+	values := make([]interface{}, 0, len(dataList)*6)
+	placeholders := make([]string, 0, len(dataList))
+
+	for _, data := range dataList {
+		// 解析时间戳
+		timestamp, err := time.Parse(time.RFC3339, data.Timestamp)
+		if err != nil {
+			return fmt.Errorf("invalid timestamp format for device %s: %w", data.DeviceID, err)
+		}
+
+		placeholders = append(placeholders, "(?, ?, ?, ?, ?, ?)")
+		values = append(values, timestamp, data.DeviceID, data.MetricName, data.Value, data.Priority, data.Data)
+	}
+
+	query += strings.Join(placeholders, ",")
+
+	_, err := s.db.Exec(query, values...)
 	return err
 }
 

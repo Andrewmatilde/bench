@@ -20,9 +20,12 @@ import (
 )
 
 type Server struct {
-	db     *sql.DB
-	mux    *http.ServeMux
-	config *config.Config
+	db           *sql.DB
+	mux          *http.ServeMux
+	config       *config.Config
+	dataChannel  chan *database.SensorData
+	batchSize    int
+	flushTimeout time.Duration
 }
 
 func NewServer(cfg *config.Config) (*Server, error) {
@@ -50,13 +53,25 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		return nil, fmt.Errorf("failed to initialize database: %w", err)
 	}
 
+	flushTimeout, err := time.ParseDuration(cfg.FlushTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("invalid flush timeout: %w", err)
+	}
+
 	server := &Server{
-		db:     db,
-		mux:    http.NewServeMux(),
-		config: cfg,
+		db:           db,
+		mux:          http.NewServeMux(),
+		config:       cfg,
+		dataChannel:  make(chan *database.SensorData, cfg.ChannelBuffer),
+		batchSize:    cfg.BatchSize,
+		flushTimeout: flushTimeout,
 	}
 
 	server.setupRoutes()
+	
+	// 启动异步数据处理协程
+	go server.processBatchData()
+	
 	return server, nil
 }
 
@@ -88,7 +103,6 @@ func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) sensorDataHandler(w http.ResponseWriter, r *http.Request) {
-	return
 	defer func() {
 		if err := recover(); err != nil {
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -124,13 +138,15 @@ func (s *Server) sensorDataHandler(w http.ResponseWriter, r *http.Request) {
 		data.Priority = 2 // 默认中等优先级
 	}
 
-	dbService := database.NewService(s.db)
-	if err := dbService.InsertSensorData(&data); err != nil {
-		http.Error(w, "Database error", http.StatusInternalServerError)
-		return
+	// 异步发送数据到批处理通道
+	select {
+	case s.dataChannel <- &data:
+		// 数据成功发送到通道
+		w.WriteHeader(http.StatusOK)
+	default:
+		// 通道已满，返回服务繁忙
+		http.Error(w, "Service busy, please retry", http.StatusServiceUnavailable)
 	}
-
-	return
 }
 
 func (s *Server) statsHandler(w http.ResponseWriter, r *http.Request) {
@@ -187,7 +203,41 @@ func (s *Server) Start() error {
 	return srv.ListenAndServe()
 }
 
+// processBatchData 异步批处理数据
+func (s *Server) processBatchData() {
+	batch := make([]*database.SensorData, 0, s.batchSize)
+	ticker := time.NewTicker(s.flushTimeout)
+	defer ticker.Stop()
+
+	dbService := database.NewService(s.db)
+
+	for {
+		select {
+		case data := <-s.dataChannel:
+			batch = append(batch, data)
+			
+			// 达到批次大小，立即写入
+			if len(batch) >= s.batchSize {
+				if err := dbService.BatchInsertSensorData(batch); err != nil {
+					log.Printf("Batch insert error: %v", err)
+				}
+				batch = batch[:0] // 清空切片
+			}
+			
+		case <-ticker.C:
+			// 超时刷新，写入剩余数据
+			if len(batch) > 0 {
+				if err := dbService.BatchInsertSensorData(batch); err != nil {
+					log.Printf("Batch insert error on timeout: %v", err)
+				}
+				batch = batch[:0] // 清空切片
+			}
+		}
+	}
+}
+
 func (s *Server) Close() error {
+	close(s.dataChannel)
 	return s.db.Close()
 }
 
