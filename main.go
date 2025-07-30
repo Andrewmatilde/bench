@@ -26,6 +26,7 @@ type Server struct {
 	dataChannel  chan *database.SensorData
 	batchSize    int
 	flushTimeout time.Duration
+	workerCount  int
 }
 
 func NewServer(cfg *config.Config) (*Server, error) {
@@ -65,12 +66,15 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		dataChannel:  make(chan *database.SensorData, cfg.ChannelBuffer),
 		batchSize:    cfg.BatchSize,
 		flushTimeout: flushTimeout,
+		workerCount:  cfg.WorkerCount,
 	}
 
 	server.setupRoutes()
 	
-	// 启动异步数据处理协程
-	go server.processBatchData()
+	// 启动多个worker处理批量数据
+	for i := 0; i < server.workerCount; i++ {
+		go server.processBatchData(i)
+	}
 	
 	return server, nil
 }
@@ -203,23 +207,38 @@ func (s *Server) Start() error {
 	return srv.ListenAndServe()
 }
 
-// processBatchData 异步批处理数据
-func (s *Server) processBatchData() {
+// processBatchData 异步批处理数据 - 支持多worker并发处理
+func (s *Server) processBatchData(workerID int) {
 	batch := make([]*database.SensorData, 0, s.batchSize)
 	ticker := time.NewTicker(s.flushTimeout)
 	defer ticker.Stop()
 
 	dbService := database.NewService(s.db)
+	log.Printf("Worker %d started for batch processing", workerID)
 
 	for {
 		select {
-		case data := <-s.dataChannel:
+		case data, ok := <-s.dataChannel:
+			if !ok {
+				// Channel关闭，处理剩余数据后退出
+				if len(batch) > 0 {
+					if err := dbService.BatchInsertSensorData(batch); err != nil {
+						log.Printf("Worker %d: Final batch insert error: %v", workerID, err)
+					}
+					log.Printf("Worker %d: Processed final batch of %d items", workerID, len(batch))
+				}
+				log.Printf("Worker %d shutdown", workerID)
+				return
+			}
+			
 			batch = append(batch, data)
 			
 			// 达到批次大小，立即写入
 			if len(batch) >= s.batchSize {
 				if err := dbService.BatchInsertSensorData(batch); err != nil {
-					log.Printf("Batch insert error: %v", err)
+					log.Printf("Worker %d: Batch insert error: %v", workerID, err)
+				} else {
+					log.Printf("Worker %d: Successfully processed batch of %d items", workerID, len(batch))
 				}
 				batch = batch[:0] // 清空切片
 			}
@@ -228,7 +247,9 @@ func (s *Server) processBatchData() {
 			// 超时刷新，写入剩余数据
 			if len(batch) > 0 {
 				if err := dbService.BatchInsertSensorData(batch); err != nil {
-					log.Printf("Batch insert error on timeout: %v", err)
+					log.Printf("Worker %d: Batch insert error on timeout: %v", workerID, err)
+				} else {
+					log.Printf("Worker %d: Timeout flush processed %d items", workerID, len(batch))
 				}
 				batch = batch[:0] // 清空切片
 			}

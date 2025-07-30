@@ -33,6 +33,7 @@ type ConfigFile struct {
 		BatchSize      int    `yaml:"batch_size"`
 		FlushTimeout   string `yaml:"flush_timeout"`
 		ChannelBuffer  int    `yaml:"channel_buffer"`
+		WorkerCount    int    `yaml:"worker_count"`
 	} `yaml:"app"`
 }
 
@@ -54,6 +55,7 @@ type Config struct {
 	BatchSize     int    `yaml:"batch_size"`
 	FlushTimeout  string `yaml:"flush_timeout"`
 	ChannelBuffer int    `yaml:"channel_buffer"`
+	WorkerCount   int    `yaml:"worker_count"`
 }
 
 // New 创建新的配置实例
@@ -135,6 +137,9 @@ func New() *Config {
 	if config.ChannelBuffer == 0 {
 		config.ChannelBuffer = 10000
 	}
+	if config.WorkerCount == 0 {
+		config.WorkerCount = 4
+	}
 
 	return config
 }
@@ -175,6 +180,7 @@ func loadConfigFromFile(config *Config, configPath string) error {
 	config.BatchSize = configFile.App.BatchSize
 	config.FlushTimeout = configFile.App.FlushTimeout
 	config.ChannelBuffer = configFile.App.ChannelBuffer
+	config.WorkerCount = configFile.App.WorkerCount
 
 	return nil
 }
