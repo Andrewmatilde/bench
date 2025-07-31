@@ -27,7 +27,7 @@ MySQL配置：
 
 上报配置：
   report_url          string   统计数据上报URL (默认: "")
-  report_key          string   上报认证密钥，请填写自己组的具体组名，用于设置 X-Team-ID 和 X-Team-Name header (默认: "")
+  report_key          string   上报认证密钥，请填写自己组的具体组名。必填参数，用于区分各小组上报身份 (默认: ""，可选参数为 team1/team2/team3/team4/team5)
 
 示例配置文件 (config.json)：
 {

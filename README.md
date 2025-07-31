@@ -13,12 +13,8 @@ bench-server/
 │   │   └── config.go
 │   ├── database/         # 数据库操作
 │   │   └── database.go
-│   ├── handlers/         # HTTP处理器
-│   │   └── handlers.go
-│   ├── utils/           # 工具函数
-│   │   └── utils.go
-│   └── writer/          # 写入器（批量、压缩、优先级）
-│       └── writer.go
+│   └── handlers/         # HTTP处理器
+│       └── handlers.go
 ├── init.sql             # 数据库初始化脚本
 ├── go.mod              # Go模块文件
 ├── go.sum              # 依赖校验文件
@@ -39,7 +35,7 @@ bench-server/
 1. **克隆仓库**
 ```bash
 git clone <repository-url>
-cd bench-server
+cd bench
 ```
 
 2. **安装依赖**
@@ -136,10 +132,7 @@ HTTP处理器包，包含：
 |------|------|------|
 | GET | `/health` | 健康检查 |
 | POST | `/api/sensor-data` | 传感器数据上报 |
-| POST | `/api/sensor-rw` | 传感器读写操作 |
-| POST | `/api/batch-sensor-rw` | 批量传感器读写 |
 | GET | `/api/stats` | 统计信息查询 |
-| POST | `/api/get-sensor-data` | 传感器数据查询 |
 
 ### 示例API调用
 
@@ -209,7 +202,6 @@ pkg/config  中间件          SQL操作
 
 1. **新增API端点**：在 `pkg/handlers` 中添加处理器
 2. **数据库操作**：在 `pkg/database` 中添加相关方法
-3. **工具函数**：在 `pkg/utils` 中添加通用工具
 4. **配置选项**：在 `pkg/config` 中扩展配置结构
 
 ### 代码规范
@@ -270,10 +262,6 @@ go test ./...
   "duration_seconds": 60,
   "mode": "qps",
   "qps": 100,
-  "sensor_data_ratio": 0.4,
-  "sensor_rw_ratio": 0.3,
-  "batch_rw_ratio": 0.2,
-  "query_ratio": 0.1,
   "key_range": 1000,
   "report_interval": 5,
   "mysql_dsn": "root:password@tcp(localhost:3306)/bench_server",
@@ -291,10 +279,6 @@ go test ./...
 | `mode` | string | 流量控制模式: "qps" 或 "concurrency" | qps |
 | `qps` | int | 目标QPS（QPS模式） | 100 |
 | `concurrency` | int | 并发数（并发模式） | 10 |
-| `sensor_data_ratio` | float64 | 传感器数据上报比例 | 0.4 |
-| `sensor_rw_ratio` | float64 | 传感器读写操作比例 | 0.3 |
-| `batch_rw_ratio` | float64 | 批量操作比例 | 0.2 |
-| `query_ratio` | float64 | 查询操作比例 | 0.1 |
 | `key_range` | int | 设备ID范围 | 1000 |
 | `report_interval` | int | 实时报告间隔（秒） | 5 |
 | `mysql_dsn` | string | MySQL数据源名称 | "" |
@@ -315,26 +299,6 @@ go test ./...
   "mode": "concurrency",
   "concurrency": 50,
   "duration_seconds": 300
-}
-```
-
-**写入密集型测试**
-```json
-{
-  "sensor_data_ratio": 0.6,
-  "sensor_rw_ratio": 0.3,
-  "batch_rw_ratio": 0.1,
-  "query_ratio": 0.0
-}
-```
-
-**查询密集型测试**
-```json
-{
-  "sensor_data_ratio": 0.1,
-  "sensor_rw_ratio": 0.1,
-  "batch_rw_ratio": 0.1,
-  "query_ratio": 0.7
 }
 ```
 

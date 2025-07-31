@@ -29,11 +29,11 @@
 
 | Service   | EIP        |  Host       | Config | 备注 |
 | -------   | -------    | ------- | -----------|---|
-| Client    | 106.75.250.112 |  10.0.0.165 | 16C16G500G |  |
-| Mysql     | 106.75.216.32  |  10.0.0.166 | 4C8G500G   | Mysql 已经安装，无密码|
-| Business1 | 106.75.233.135 |  10.0.0.167 | 4C8G500G   | |
-| Business2 | 106.75.232.61  |  10.0.0.168 | 2C4G500G   | |
-| Business3 | 106.75.247.250 |  10.0.0.169 | 2C4G500G   | |
+| Client    | 比赛时提供   |  10.0.0.165 | 16C16G500G |  |
+| Mysql     | 比赛时提供   |  10.0.0.166 | 4C8G500G   | Mysql 已经安装，无密码|
+| Business1 | 比赛时提供   |  10.0.0.167 | 4C8G500G   | |
+| Business2 | 比赛时提供   |  10.0.0.168 | 2C4G500G   | |
+| Business3 | 比赛时提供   |  10.0.0.169 | 2C4G500G   | |
 
 ### 软件环境
 
@@ -79,9 +79,7 @@ type SensorData struct {
 
 ### 核心API端点
 
-- `POST /api/sensor-rw` - 传感器数据读写操作（带事务）
-- `POST /api/batch-sensor-rw` - 批量传感器数据读写操作
-- `GET /api/get-sensor-data` - 传感器时序数据查询
+- `POST /api/sensor-data` - 传感器数据上报
 
 ### 数据结构
 
