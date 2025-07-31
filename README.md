@@ -198,12 +198,6 @@ pkg/config  中间件          SQL操作
             验证
 ```
 
-### 添加新功能
-
-1. **新增API端点**：在 `pkg/handlers` 中添加处理器
-2. **数据库操作**：在 `pkg/database` 中添加相关方法
-4. **配置选项**：在 `pkg/config` 中扩展配置结构
-
 ### 代码规范
 
 - 遵循Go官方代码规范
@@ -265,7 +259,7 @@ go test ./...
   "key_range": 1000,
   "report_interval": 5,
   "mysql_dsn": "root:password@tcp(localhost:3306)/bench_server",
-  "report_url": "http://monitoring-server/api/stats",
+  "report_url": "http://106.75.213.115:8080/api/stats/report",
   "report_key": "your-team-key"
 }
 ```
@@ -282,8 +276,8 @@ go test ./...
 | `key_range` | int | 设备ID范围 | 1000 |
 | `report_interval` | int | 实时报告间隔（秒） | 5 |
 | `mysql_dsn` | string | MySQL数据源名称 | "" |
-| `report_url` | string | 统计数据上报URL | "" |
-| `report_key` | string | 上报认证密钥 | "" |
+| `report_url` | string | 统计数据上报URL | ""，请填写为 http://106.75.213.115:8080/api/stats/report |
+| `report_key` | string | 上报认证密钥 | ""，可选参数为 team1/team2/team3/team4/team5 |
 
 #### 测试场景
 

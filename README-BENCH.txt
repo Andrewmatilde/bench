@@ -26,7 +26,7 @@ MySQL配置：
   mysql_dsn           string   MySQL数据源名称 (默认: "")
 
 上报配置：
-  report_url          string   统计数据上报URL (默认: "")
+  report_url          string   统计数据上报URL (默认: ""，请填写为 http://106.75.213.115:8080/api/stats/report)
   report_key          string   上报认证密钥，请填写自己组的具体组名。必填参数，用于区分各小组上报身份 (默认: ""，可选参数为 team1/team2/team3/team4/team5)
 
 示例配置文件 (config.json)：
@@ -38,8 +38,8 @@ MySQL配置：
   "key_range": 1000,
   "report_interval": 5,
   "mysql_dsn": "",
-  "report_url": "http://monitoring-server/api/stats",
-  "report_key": "your-team-key"  // 将同时设置 X-Team-ID 和 X-Team-Name header
+  "report_url": "http://106.75.213.115:8080/api/stats/report",
+  "report_key": "your-team-key"  // 用于区分各小组上报身份，可选参数为 team1/team2/team3/team4/team5
 }
 
 使用方法：
