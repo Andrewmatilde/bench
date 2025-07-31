@@ -27,13 +27,9 @@ type ConfigFile struct {
 		Format string `yaml:"format"`
 	} `yaml:"logging"`
 	App struct {
-		ReadTimeout    string `yaml:"read_timeout"`
-		WriteTimeout   string `yaml:"write_timeout"`
-		IdleTimeout    string `yaml:"idle_timeout"`
-		BatchSize      int    `yaml:"batch_size"`
-		FlushTimeout   string `yaml:"flush_timeout"`
-		ChannelBuffer  int    `yaml:"channel_buffer"`
-		WorkerCount    int    `yaml:"worker_count"`
+		ReadTimeout  string `yaml:"read_timeout"`
+		WriteTimeout string `yaml:"write_timeout"`
+		IdleTimeout  string `yaml:"idle_timeout"`
 	} `yaml:"app"`
 }
 
@@ -49,13 +45,9 @@ type Config struct {
 	MaxIdleConns int    `yaml:"max_idle_conns"`
 	LogLevel     string `yaml:"log_level"`
 	LogFormat    string `yaml:"log_format"`
-	ReadTimeout   string `yaml:"read_timeout"`
-	WriteTimeout  string `yaml:"write_timeout"`
-	IdleTimeout   string `yaml:"idle_timeout"`
-	BatchSize     int    `yaml:"batch_size"`
-	FlushTimeout  string `yaml:"flush_timeout"`
-	ChannelBuffer int    `yaml:"channel_buffer"`
-	WorkerCount   int    `yaml:"worker_count"`
+	ReadTimeout  string `yaml:"read_timeout"`
+	WriteTimeout string `yaml:"write_timeout"`
+	IdleTimeout  string `yaml:"idle_timeout"`
 }
 
 // New 创建新的配置实例
@@ -128,18 +120,6 @@ func New() *Config {
 	if config.IdleTimeout == "" {
 		config.IdleTimeout = "60s"
 	}
-	if config.BatchSize == 0 {
-		config.BatchSize = 100
-	}
-	if config.FlushTimeout == "" {
-		config.FlushTimeout = "5s"
-	}
-	if config.ChannelBuffer == 0 {
-		config.ChannelBuffer = 10000
-	}
-	if config.WorkerCount == 0 {
-		config.WorkerCount = 4
-	}
 
 	return config
 }
@@ -177,10 +157,6 @@ func loadConfigFromFile(config *Config, configPath string) error {
 	config.ReadTimeout = configFile.App.ReadTimeout
 	config.WriteTimeout = configFile.App.WriteTimeout
 	config.IdleTimeout = configFile.App.IdleTimeout
-	config.BatchSize = configFile.App.BatchSize
-	config.FlushTimeout = configFile.App.FlushTimeout
-	config.ChannelBuffer = configFile.App.ChannelBuffer
-	config.WorkerCount = configFile.App.WorkerCount
 
 	return nil
 }

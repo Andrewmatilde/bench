@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -14,19 +13,20 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/gorilla/mux"
+	"github.com/sirupsen/logrus"
 
 	"bench-server/pkg/config"
 	"bench-server/pkg/database"
+	"bench-server/pkg/handlers"
 )
 
 type Server struct {
-	db           *sql.DB
-	mux          *http.ServeMux
-	config       *config.Config
-	dataChannel  chan *database.SensorData
-	batchSize    int
-	flushTimeout time.Duration
-	workerCount  int
+	db      *sql.DB
+	router  *mux.Router
+	logger  *logrus.Logger
+	config  *config.Config
+	handler *handlers.Server
 }
 
 func NewServer(cfg *config.Config) (*Server, error) {
@@ -54,46 +54,79 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		return nil, fmt.Errorf("failed to initialize database: %w", err)
 	}
 
-	flushTimeout, err := time.ParseDuration(cfg.FlushTimeout)
-	if err != nil {
-		return nil, fmt.Errorf("invalid flush timeout: %w", err)
+	// 初始化日志
+	logger := logrus.New()
+
+	// 根据配置设置日志格式
+	if cfg.LogFormat == "json" {
+		logger.SetFormatter(&logrus.JSONFormatter{})
+	} else {
+		logger.SetFormatter(&logrus.TextFormatter{})
 	}
 
+	// 根据配置设置日志级别
+	level, err := logrus.ParseLevel(cfg.LogLevel)
+	if err != nil {
+		level = logrus.InfoLevel
+	}
+	logger.SetLevel(level)
+
+	// 创建处理器实例
+	handlerServer := handlers.NewServer(db, logger)
+
 	server := &Server{
-		db:           db,
-		mux:          http.NewServeMux(),
-		config:       cfg,
-		dataChannel:  make(chan *database.SensorData, cfg.ChannelBuffer),
-		batchSize:    cfg.BatchSize,
-		flushTimeout: flushTimeout,
-		workerCount:  cfg.WorkerCount,
+		db:      db,
+		router:  mux.NewRouter(),
+		logger:  logger,
+		config:  cfg,
+		handler: handlerServer,
 	}
 
 	server.setupRoutes()
-	
-	// 启动多个worker处理批量数据
-	for i := 0; i < server.workerCount; i++ {
-		go server.processBatchData(i)
-	}
-	
 	return server, nil
 }
 
 func (s *Server) setupRoutes() {
 	// 健康检查
-	s.mux.HandleFunc("/health", s.healthHandler)
+	s.router.HandleFunc("/health", s.healthHandler).Methods("GET")
 
 	// 传感器数据路由
-	s.mux.HandleFunc("/api/sensor-data", s.sensorDataHandler)
-	s.mux.HandleFunc("/api/stats", s.statsHandler)
+	s.router.HandleFunc("/api/sensor-data", s.handler.SensorDataHandler).Methods("POST")
+	s.router.HandleFunc("/api/stats", s.handler.StatsHandler).Methods("GET")
+
+	// 添加中间件
+	s.router.Use(s.loggingMiddleware)
+	s.router.Use(s.recoveryMiddleware)
+}
+
+func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		next.ServeHTTP(w, r)
+		duration := time.Since(start)
+
+		s.logger.WithFields(logrus.Fields{
+			"method":     r.Method,
+			"path":       r.URL.Path,
+			"duration":   duration,
+			"user_agent": r.UserAgent(),
+		}).Info("HTTP request")
+	})
+}
+
+func (s *Server) recoveryMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				s.logger.WithField("error", err).Error("Panic recovered")
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "GET" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
 	if err := s.db.Ping(); err != nil {
 		http.Error(w, "Database connection failed", http.StatusServiceUnavailable)
 		return
@@ -106,83 +139,10 @@ func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) sensorDataHandler(w http.ResponseWriter, r *http.Request) {
-	defer func() {
-		if err := recover(); err != nil {
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-		}
-	}()
-
-	if r.Method != "POST" {
-		http.Error(w, "Only POST method allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "Failed to read request body", http.StatusBadRequest)
-		return
-	}
-	defer r.Body.Close()
-
-	var data database.SensorData
-	if err := json.Unmarshal(body, &data); err != nil {
-		http.Error(w, "Invalid JSON format", http.StatusBadRequest)
-		return
-	}
-
-	// 数据验证
-	if data.DeviceID == "" || data.MetricName == "" || data.Timestamp == "" {
-		http.Error(w, "Missing required fields", http.StatusBadRequest)
-		return
-	}
-
-	// 验证优先级
-	if data.Priority < 1 || data.Priority > 3 {
-		data.Priority = 2 // 默认中等优先级
-	}
-
-	// 异步发送数据到批处理通道
-	select {
-	case s.dataChannel <- &data:
-		// 数据成功发送到通道
-		w.WriteHeader(http.StatusOK)
-	default:
-		// 通道已满，返回服务繁忙
-		http.Error(w, "Service busy, please retry", http.StatusServiceUnavailable)
-	}
-}
-
-func (s *Server) statsHandler(w http.ResponseWriter, r *http.Request) {
-	// 恢复 panic
-	defer func() {
-		if err := recover(); err != nil {
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-		}
-	}()
-
-	if r.Method != "GET" {
-		log.Printf("Method not allowed: %s", r.Method)
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	dbService := database.NewService(s.db)
-	stats, err := dbService.GetStats()
-	if err != nil {
-		log.Printf("Failed to get stats: %v", err)
-		http.Error(w, "Database error", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(stats)
-}
-
 func (s *Server) Start() error {
 	srv := &http.Server{
 		Addr:         ":" + s.config.Port,
-		Handler:      s.mux,
+		Handler:      s.router,
 		ReadTimeout:  parseDuration(s.config.ReadTimeout),
 		WriteTimeout: parseDuration(s.config.WriteTimeout),
 		IdleTimeout:  parseDuration(s.config.IdleTimeout),
@@ -194,71 +154,20 @@ func (s *Server) Start() error {
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 		<-sigChan
 
-		log.Printf("Shutting down server...")
+		s.logger.Info("Shutting down server...")
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
 		if err := srv.Shutdown(ctx); err != nil {
-			log.Printf("Server shutdown error: %v", err)
+			s.logger.WithError(err).Error("Server shutdown error")
 		}
 	}()
 
-	log.Printf("Starting server on port %s", s.config.Port)
+	s.logger.WithField("port", s.config.Port).Info("Starting server")
 	return srv.ListenAndServe()
 }
 
-// processBatchData 异步批处理数据 - 支持多worker并发处理
-func (s *Server) processBatchData(workerID int) {
-	batch := make([]*database.SensorData, 0, s.batchSize)
-	ticker := time.NewTicker(s.flushTimeout)
-	defer ticker.Stop()
-
-	dbService := database.NewService(s.db)
-	log.Printf("Worker %d started for batch processing", workerID)
-
-	for {
-		select {
-		case data, ok := <-s.dataChannel:
-			if !ok {
-				// Channel关闭，处理剩余数据后退出
-				if len(batch) > 0 {
-					if err := dbService.BatchInsertSensorData(batch); err != nil {
-						log.Printf("Worker %d: Final batch insert error: %v", workerID, err)
-					}
-					log.Printf("Worker %d: Processed final batch of %d items", workerID, len(batch))
-				}
-				log.Printf("Worker %d shutdown", workerID)
-				return
-			}
-			
-			batch = append(batch, data)
-			
-			// 达到批次大小，立即写入
-			if len(batch) >= s.batchSize {
-				if err := dbService.BatchInsertSensorData(batch); err != nil {
-					log.Printf("Worker %d: Batch insert error: %v", workerID, err)
-				} else {
-					log.Printf("Worker %d: Successfully processed batch of %d items", workerID, len(batch))
-				}
-				batch = batch[:0] // 清空切片
-			}
-			
-		case <-ticker.C:
-			// 超时刷新，写入剩余数据
-			if len(batch) > 0 {
-				if err := dbService.BatchInsertSensorData(batch); err != nil {
-					log.Printf("Worker %d: Batch insert error on timeout: %v", workerID, err)
-				} else {
-					log.Printf("Worker %d: Timeout flush processed %d items", workerID, len(batch))
-				}
-				batch = batch[:0] // 清空切片
-			}
-		}
-	}
-}
-
 func (s *Server) Close() error {
-	close(s.dataChannel)
 	return s.db.Close()
 }
 
